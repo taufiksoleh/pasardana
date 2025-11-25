@@ -137,8 +137,8 @@ class PasardanaScraper:
                         if not is_disabled:
                             logger.info(f"Found next button with selector: {selector}")
                             await next_button.click()
-                            await page.wait_for_load_state('networkidle', timeout=10000)
-                            await asyncio.sleep(2)  # Additional wait for dynamic content
+                            await page.wait_for_load_state('load', timeout=30000)
+                            await asyncio.sleep(3)  # Additional wait for dynamic content
                             return True
                 except Exception:
                     continue
@@ -157,8 +157,8 @@ class PasardanaScraper:
                         if next_page:
                             logger.info(f"Navigating to page {next_num}")
                             await next_page.click()
-                            await page.wait_for_load_state('networkidle', timeout=10000)
-                            await asyncio.sleep(2)
+                            await page.wait_for_load_state('load', timeout=30000)
+                            await asyncio.sleep(3)
                             return True
                     except ValueError:
                         pass
@@ -191,10 +191,24 @@ class PasardanaScraper:
 
             try:
                 logger.info(f"Navigating to {self.base_url}")
-                await page.goto(self.base_url, wait_until='networkidle', timeout=60000)
+                # Use domcontentloaded instead of networkidle for better reliability in CI environments
+                # Retry up to 3 times if navigation fails
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        await page.goto(self.base_url, wait_until='domcontentloaded', timeout=90000)
+                        logger.info(f"Successfully loaded page on attempt {attempt + 1}")
+                        break
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Navigation attempt {attempt + 1} failed: {e}. Retrying...")
+                            await asyncio.sleep(5)
+                        else:
+                            logger.error(f"All navigation attempts failed")
+                            raise
 
-                # Wait for content to load
-                await asyncio.sleep(3)
+                # Wait for content to load and any JavaScript to execute
+                await asyncio.sleep(5)
 
                 # Check if we need to handle any popups or cookie consent
                 try:
