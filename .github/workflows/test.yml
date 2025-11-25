@@ -13,7 +13,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Use Ubuntu 22.04 for better Playwright compatibility
 
     strategy:
       matrix:
@@ -39,6 +39,8 @@ jobs:
         run: |
           playwright install chromium
           playwright install-deps chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
 
       - name: Lint with flake8
         continue-on-error: true

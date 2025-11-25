@@ -185,10 +185,11 @@ GitHub Actions free tier limits:
 
 ### Browser Issues
 
-If Playwright fails:
+If Playwright fails with package installation errors:
+- **Ubuntu 24.04 compatibility**: Workflows use `ubuntu-22.04` for better Playwright support
+- If you see errors about `libasound2` or similar packages, ensure runner uses `ubuntu-22.04`
 - Ensure `playwright install-deps chromium` is included
-- Check Ubuntu version compatibility
-- Consider using `ubuntu-latest` runner
+- All workflows are pre-configured with the correct Ubuntu version
 
 ## Cost Optimization
 

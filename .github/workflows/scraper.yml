@@ -30,7 +30,7 @@ on:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Use Ubuntu 22.04 for better Playwright compatibility
 
     steps:
       - name: Checkout repository
@@ -53,6 +53,8 @@ jobs:
         run: |
           playwright install chromium
           playwright install-deps chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
 
       - name: Create data directory
         run: mkdir -p data
