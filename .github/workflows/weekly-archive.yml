@@ -1,0 +1,78 @@
+name: Weekly Data Archive
+
+on:
+  # Run weekly on Sundays at midnight UTC
+  schedule:
+    - cron: '0 0 * * 0'
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout data branch
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          fetch-depth: 0
+
+      - name: Create weekly archive
+        run: |
+          WEEK=$(date -u +"%Y-W%U")
+          ARCHIVE_DIR="archives/${WEEK}"
+
+          mkdir -p "${ARCHIVE_DIR}"
+
+          # Copy latest data to archive
+          if [ -f data/pasardana_funds_latest.csv ]; then
+            cp data/pasardana_funds_latest.csv "${ARCHIVE_DIR}/pasardana_funds_${WEEK}.csv"
+          fi
+
+          if [ -f data/pasardana_funds_latest.json ]; then
+            cp data/pasardana_funds_latest.json "${ARCHIVE_DIR}/pasardana_funds_${WEEK}.json"
+          fi
+
+          # Compress archive
+          tar -czf "archives/pasardana_${WEEK}.tar.gz" -C archives "${WEEK}"
+
+          echo "Created archive for week ${WEEK}"
+          ls -lh "archives/pasardana_${WEEK}.tar.gz"
+
+      - name: Commit archive
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git add archives/
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            WEEK=$(date -u +"%Y-W%U")
+            git commit -m "Add weekly archive for ${WEEK}"
+            git push origin data
+          fi
+
+      - name: Cleanup old archives
+        run: |
+          # Keep only last 12 weeks of archives (3 months)
+          find archives -name "pasardana_*.tar.gz" -mtime +84 -delete || true
+
+          git add archives/
+
+          if git diff --staged --quiet; then
+            echo "No archives to cleanup"
+          else
+            git commit -m "Cleanup old archives (keeping last 12 weeks)"
+            git push origin data
+          fi
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-archive-${{ github.run_number }}
+          path: archives/*.tar.gz
+          retention-days: 90

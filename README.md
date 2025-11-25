@@ -7,8 +7,10 @@ A robust web scraper for collecting daily mutual fund data from [pasardana.id](h
 - ✅ **Complete Data Extraction**: Scrapes all data from fund tables
 - ✅ **Pagination Support**: Automatically handles all pages
 - ✅ **Multiple Export Formats**: CSV, JSON, and Excel
+- ✅ **GitHub Actions Integration**: Automated scraping with no server required
 - ✅ **Automated Pipeline**: Schedule daily updates or run at intervals
 - ✅ **Robust Error Handling**: Retry logic and comprehensive logging
+- ✅ **Docker Support**: Containerized deployment ready
 - ✅ **Configurable**: Environment-based configuration
 - ✅ **Headless Mode**: Run without GUI for server deployments
 
@@ -129,14 +131,23 @@ Each record includes:
 
 ```
 pasardana/
+├── .github/
+│   └── workflows/
+│       ├── scraper.yml          # Daily scraper workflow
+│       ├── weekly-archive.yml   # Weekly archive workflow
+│       ├── test.yml            # Test workflow
+│       └── README.md           # Workflows documentation
 ├── scraper.py           # Main scraper implementation
 ├── pipeline.py          # Automated pipeline and scheduler
 ├── setup.sh            # Setup script
 ├── requirements.txt    # Python dependencies
+├── Dockerfile          # Docker container configuration
+├── docker-compose.yml  # Docker Compose setup
 ├── .env.example        # Example configuration
 ├── .env               # Your configuration (not in git)
 ├── .gitignore         # Git ignore rules
 ├── README.md          # This file
+├── QUICKSTART.md      # Quick start guide
 ├── data/              # Output directory (created automatically)
 │   ├── *.csv
 │   └── *.json
@@ -145,7 +156,87 @@ pasardana/
     └── pipeline.log
 ```
 
-## Automation
+## GitHub Actions (Recommended)
+
+The easiest way to automate the scraper is using GitHub Actions. No server required!
+
+### Quick Setup
+
+1. **Push to GitHub**: Workflows are already configured in `.github/workflows/`
+2. **Enable Actions**: Go to repository Settings → Actions → Enable workflows
+3. **Done!** Scraper runs automatically daily at 9:00 AM UTC
+
+### Available Workflows
+
+#### Daily Scraper (scraper.yml)
+- **Schedule**: Daily at 9:00 AM UTC (customizable)
+- **Manual trigger**: Actions tab → Run workflow
+- **Outputs**:
+  - Data uploaded as artifacts (90-day retention)
+  - Latest data committed to `data` branch
+  - Run summary with statistics
+
+#### Weekly Archive (weekly-archive.yml)
+- **Schedule**: Weekly on Sundays
+- **Purpose**: Creates compressed archives of data
+- **Retention**: Last 12 weeks
+
+#### Test Suite (test.yml)
+- **Trigger**: On pull requests
+- **Tests**: Python 3.9-3.12, linting, imports
+
+### Manual Run
+
+1. Go to **Actions** tab on GitHub
+2. Select "Pasardana Data Scraper"
+3. Click "Run workflow"
+4. Choose log level and run
+
+### Accessing Scraped Data
+
+**From Data Branch**:
+```bash
+git checkout data
+ls data/
+```
+
+**Download from GitHub**:
+- Navigate to: `https://github.com/USERNAME/REPO/tree/data`
+- Download `pasardana_funds_latest.csv` or `.json`
+
+**Via GitHub Actions Artifacts**:
+- Actions tab → Workflow run → Artifacts section
+
+### Customize Schedule
+
+Edit `.github/workflows/scraper.yml`:
+```yaml
+schedule:
+  - cron: '0 */6 * * *'  # Every 6 hours
+  - cron: '0 9,21 * * *'  # Twice daily (9 AM, 9 PM UTC)
+  - cron: '0 9 * * 1-5'  # Weekdays only
+```
+
+**Cron Helper**: [crontab.guru](https://crontab.guru/)
+
+### Add Status Badge
+
+Add to README:
+```markdown
+![Scraper Status](https://github.com/USERNAME/REPO/actions/workflows/scraper.yml/badge.svg)
+```
+
+### Free Tier Limits
+
+- **Public repos**: Unlimited
+- **Private repos**: 2,000 minutes/month
+- **Typical run**: ~5-8 minutes
+
+For detailed GitHub Actions documentation, see [.github/workflows/README.md](.github/workflows/README.md)
+
+## Local Automation
+
+If you prefer to run locally instead of GitHub Actions:
 
 ### Using Cron (Linux/Mac)
 
