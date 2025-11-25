@@ -27,11 +27,8 @@ wheels/
 playwright-state/
 test-results/
 
-# Data files
+# Data files (stored in separate 'data' branch)
 data/
-*.csv
-*.json
-*.xlsx
 
 # Environment
 .env

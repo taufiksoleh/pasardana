@@ -79,19 +79,44 @@ class PasardanaScraper:
                     return headers.map(th => th.innerText.trim());
                 }''')
 
-            logger.info(f"Found {len(headers)} columns: {headers}")
+            # Clean up headers: remove empty trailing columns
+            while headers and headers[-1] == '':
+                headers.pop()
+
+            # Remove duplicate empty headers by renaming them
+            header_counts = {}
+            cleaned_headers = []
+            for header in headers:
+                if header == '':
+                    count = header_counts.get('_empty_', 0)
+                    cleaned_headers.append(f'_empty_{count}')
+                    header_counts['_empty_'] = count + 1
+                else:
+                    cleaned_headers.append(header)
+            headers = cleaned_headers
+
+            logger.info(f"Found {len(headers)} columns: {headers[:10]}..." if len(headers) > 10 else f"Found {len(headers)} columns: {headers}")
             logger.info(f"Found {len(table_data)} rows on page {page_num}")
 
             # Convert to list of dictionaries
             records = []
             for row_data in table_data:
-                if len(row_data) == len(headers):
-                    record = dict(zip(headers, row_data))
-                    record['scraped_at'] = datetime.now().isoformat()
-                    record['page_number'] = page_num
-                    records.append(record)
-                else:
-                    logger.warning(f"Row data length ({len(row_data)}) doesn't match headers ({len(headers)})")
+                # Skip empty rows (single column with no data)
+                if len(row_data) == 1 and not row_data[0]:
+                    continue
+
+                # Pad row data with empty strings if it's shorter than headers
+                if len(row_data) < len(headers):
+                    row_data = row_data + [''] * (len(headers) - len(row_data))
+                # Truncate row data if it's longer than headers
+                elif len(row_data) > len(headers):
+                    logger.warning(f"Row data length ({len(row_data)}) exceeds headers ({len(headers)}), truncating")
+                    row_data = row_data[:len(headers)]
+
+                record = dict(zip(headers, row_data))
+                record['scraped_at'] = datetime.now().isoformat()
+                record['page_number'] = page_num
+                records.append(record)
 
             return records
 
@@ -137,8 +162,8 @@ class PasardanaScraper:
                         if not is_disabled:
                             logger.info(f"Found next button with selector: {selector}")
                             await next_button.click()
-                            await page.wait_for_load_state('networkidle', timeout=10000)
-                            await asyncio.sleep(2)  # Additional wait for dynamic content
+                            await page.wait_for_load_state('load', timeout=30000)
+                            await asyncio.sleep(3)  # Additional wait for dynamic content
                             return True
                 except Exception:
                     continue
@@ -157,8 +182,8 @@ class PasardanaScraper:
                         if next_page:
                             logger.info(f"Navigating to page {next_num}")
                             await next_page.click()
-                            await page.wait_for_load_state('networkidle', timeout=10000)
-                            await asyncio.sleep(2)
+                            await page.wait_for_load_state('load', timeout=30000)
+                            await asyncio.sleep(3)
                             return True
                     except ValueError:
                         pass
@@ -191,10 +216,24 @@ class PasardanaScraper:
 
             try:
                 logger.info(f"Navigating to {self.base_url}")
-                await page.goto(self.base_url, wait_until='networkidle', timeout=60000)
+                # Use domcontentloaded instead of networkidle for better reliability in CI environments
+                # Retry up to 3 times if navigation fails
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        await page.goto(self.base_url, wait_until='domcontentloaded', timeout=90000)
+                        logger.info(f"Successfully loaded page on attempt {attempt + 1}")
+                        break
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Navigation attempt {attempt + 1} failed: {e}. Retrying...")
+                            await asyncio.sleep(5)
+                        else:
+                            logger.error(f"All navigation attempts failed")
+                            raise
 
-                # Wait for content to load
-                await asyncio.sleep(3)
+                # Wait for content to load and any JavaScript to execute
+                await asyncio.sleep(5)
 
                 # Check if we need to handle any popups or cookie consent
                 try:
