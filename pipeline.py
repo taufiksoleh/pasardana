@@ -40,7 +40,12 @@ class PasardanaPipeline:
         self.scraper = PasardanaScraper(headless=self.headless)
 
     async def run_scraper_job(self):
-        """Execute the scraper job"""
+        """
+        Execute the scraper job
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         logger.info("=" * 60)
         logger.info(f"Starting scheduled scrape job at {datetime.now()}")
         logger.info("=" * 60)
@@ -53,22 +58,36 @@ class PasardanaPipeline:
                 logger.info("Saved files:")
                 for fmt, filepath in saved_files.items():
                     logger.info(f"  - {fmt.upper()}: {filepath}")
+                logger.info("=" * 60)
+                return True
             else:
                 logger.error("Scrape job completed but no files were saved")
+                logger.info("=" * 60)
+                return False
 
         except Exception as e:
             logger.error(f"Scrape job failed: {str(e)}", exc_info=True)
-
-        logger.info("=" * 60)
+            logger.info("=" * 60)
+            return False
 
     def run_scraper_sync(self):
-        """Synchronous wrapper for async scraper job"""
-        asyncio.run(self.run_scraper_job())
+        """
+        Synchronous wrapper for async scraper job
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return asyncio.run(self.run_scraper_job())
 
     def run_once(self):
-        """Run the scraper once immediately"""
+        """
+        Run the scraper once immediately
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         logger.info("Running scraper once (immediate execution)")
-        self.run_scraper_sync()
+        return self.run_scraper_sync()
 
     def run_scheduled(self):
         """Run the scraper on a schedule"""
@@ -168,7 +187,10 @@ Environment Variables:
     # Run based on mode
     try:
         if args.mode == 'once':
-            pipeline.run_once()
+            success = pipeline.run_once()
+            if not success:
+                logger.error("Scraper failed - exiting with error code")
+                sys.exit(1)
         elif args.mode == 'schedule':
             pipeline.run_scheduled()
         elif args.mode == 'interval':
