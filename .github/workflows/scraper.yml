@@ -19,10 +19,11 @@ on:
           - WARNING
           - ERROR
 
-  # Trigger on push to main (optional)
+  # Trigger on push to main and claude/* branches (for testing)
   push:
     branches:
       - main
+      - 'claude/**'
     paths:
       - 'scraper.py'
       - 'pipeline.py'
