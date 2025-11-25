@@ -79,19 +79,44 @@ class PasardanaScraper:
                     return headers.map(th => th.innerText.trim());
                 }''')
 
-            logger.info(f"Found {len(headers)} columns: {headers}")
+            # Clean up headers: remove empty trailing columns
+            while headers and headers[-1] == '':
+                headers.pop()
+
+            # Remove duplicate empty headers by renaming them
+            header_counts = {}
+            cleaned_headers = []
+            for header in headers:
+                if header == '':
+                    count = header_counts.get('_empty_', 0)
+                    cleaned_headers.append(f'_empty_{count}')
+                    header_counts['_empty_'] = count + 1
+                else:
+                    cleaned_headers.append(header)
+            headers = cleaned_headers
+
+            logger.info(f"Found {len(headers)} columns: {headers[:10]}..." if len(headers) > 10 else f"Found {len(headers)} columns: {headers}")
             logger.info(f"Found {len(table_data)} rows on page {page_num}")
 
             # Convert to list of dictionaries
             records = []
             for row_data in table_data:
-                if len(row_data) == len(headers):
-                    record = dict(zip(headers, row_data))
-                    record['scraped_at'] = datetime.now().isoformat()
-                    record['page_number'] = page_num
-                    records.append(record)
-                else:
-                    logger.warning(f"Row data length ({len(row_data)}) doesn't match headers ({len(headers)})")
+                # Skip empty rows (single column with no data)
+                if len(row_data) == 1 and not row_data[0]:
+                    continue
+
+                # Pad row data with empty strings if it's shorter than headers
+                if len(row_data) < len(headers):
+                    row_data = row_data + [''] * (len(headers) - len(row_data))
+                # Truncate row data if it's longer than headers
+                elif len(row_data) > len(headers):
+                    logger.warning(f"Row data length ({len(row_data)}) exceeds headers ({len(headers)}), truncating")
+                    row_data = row_data[:len(headers)]
+
+                record = dict(zip(headers, row_data))
+                record['scraped_at'] = datetime.now().isoformat()
+                record['page_number'] = page_num
+                records.append(record)
 
             return records
 
