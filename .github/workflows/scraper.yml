@@ -53,8 +53,6 @@ jobs:
         run: |
           playwright install chromium
           playwright install-deps chromium
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
 
       - name: Create data directory
         run: mkdir -p data
@@ -96,28 +94,41 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          # Create data branch if it doesn't exist
-          git fetch origin data:data || git checkout -b data
-          git checkout data
+          # Save scraped data to temporary location (outside git working directory)
+          TEMP_DATA_DIR="${{ runner.temp }}/scraped-data"
+          mkdir -p "$TEMP_DATA_DIR"
+          cp -f data/pasardana_funds_latest.csv "$TEMP_DATA_DIR/" || true
+          cp -f data/pasardana_funds_latest.json "$TEMP_DATA_DIR/" || true
 
-          # Copy data files
+          # Also copy timestamped versions (last 30 days)
+          find data -name "pasardana_funds_*.csv" -mtime -30 -exec cp {} "$TEMP_DATA_DIR/" \; || true
+          find data -name "pasardana_funds_*.json" -mtime -30 -exec cp {} "$TEMP_DATA_DIR/" \; || true
+
+          # Try to fetch and checkout data branch, or create it if it doesn't exist
+          if git fetch origin data:data 2>/dev/null; then
+            git checkout data
+          else
+            # Create orphan branch (no history from main)
+            git checkout --orphan data
+            # Remove all files from staging and working directory
+            git rm -rf . 2>/dev/null || true
+            # Clean working directory to ensure no .gitignore or other files interfere
+            find . -maxdepth 1 ! -name '.' ! -name '..' ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
+          fi
+
+          # Copy data files from temp location
           mkdir -p data
-          cp -f data/pasardana_funds_latest.csv data/ || true
-          cp -f data/pasardana_funds_latest.json data/ || true
+          cp -f "$TEMP_DATA_DIR"/* data/ 2>/dev/null || true
 
-          # Also keep timestamped versions (last 30 days)
-          find data -name "pasardana_funds_*.csv" -mtime -30 -exec cp {} data/ \; || true
-          find data -name "pasardana_funds_*.json" -mtime -30 -exec cp {} data/ \; || true
-
-          # Add and commit
-          git add data/
+          # Add and commit (use -f to override .gitignore if present)
+          git add -f data/
 
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
             git commit -m "Update scraped data - ${TIMESTAMP}"
-            git push origin data
+            git push -u origin data
           fi
 
       - name: Create summary
