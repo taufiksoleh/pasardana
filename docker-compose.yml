@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  pasardana-scraper:
+    build: .
+    container_name: pasardana-scraper
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    environment:
+      - DATA_OUTPUT_DIR=/app/data
+      - HEADLESS_MODE=true
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    command: python pipeline.py --mode schedule --time "09:00"
+
+  # One-time scraper (run with: docker-compose run scraper-once)
+  scraper-once:
+    build: .
+    container_name: pasardana-scraper-once
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    environment:
+      - DATA_OUTPUT_DIR=/app/data
+      - HEADLESS_MODE=true
+      - LOG_LEVEL=INFO
+    command: python pipeline.py --mode once
+    profiles:
+      - tools
+
+  # Interval-based scraper (every 6 hours)
+  scraper-interval:
+    build: .
+    container_name: pasardana-scraper-interval
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    environment:
+      - DATA_OUTPUT_DIR=/app/data
+      - HEADLESS_MODE=true
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    command: python pipeline.py --mode interval --hours 6
+    profiles:
+      - interval
