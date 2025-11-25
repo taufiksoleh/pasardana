@@ -1,0 +1,154 @@
+name: Pasardana Data Scraper
+
+on:
+  # Run on schedule (daily at 9:00 AM UTC)
+  schedule:
+    - cron: '0 9 * * *'  # Daily at 9:00 AM UTC
+
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: 'Log level'
+        required: false
+        default: 'INFO'
+        type: choice
+        options:
+          - DEBUG
+          - INFO
+          - WARNING
+          - ERROR
+
+  # Trigger on push to main (optional)
+  push:
+    branches:
+      - main
+    paths:
+      - 'scraper.py'
+      - 'pipeline.py'
+      - '.github/workflows/scraper.yml'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-22.04  # Use Ubuntu 22.04 for better Playwright compatibility
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper git operations
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Run scraper
+        env:
+          HEADLESS_MODE: true
+          LOG_LEVEL: ${{ inputs.log_level || 'INFO' }}
+          DATA_OUTPUT_DIR: ./data
+        run: |
+          python pipeline.py --mode once
+
+      - name: Check scraped data
+        run: |
+          echo "=== Scraped files ==="
+          ls -lh data/
+          echo ""
+          echo "=== Latest CSV preview ==="
+          if [ -f data/pasardana_funds_latest.csv ]; then
+            head -n 5 data/pasardana_funds_latest.csv
+            echo "..."
+            echo "Total lines: $(wc -l < data/pasardana_funds_latest.csv)"
+          else
+            echo "No CSV file found"
+          fi
+
+      - name: Upload scraped data as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pasardana-data-${{ github.run_number }}
+          path: |
+            data/*.csv
+            data/*.json
+          retention-days: 90
+
+      - name: Commit and push data to repository
+        if: success()
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Create data branch if it doesn't exist
+          git fetch origin data:data || git checkout -b data
+          git checkout data
+
+          # Copy data files
+          mkdir -p data
+          cp -f data/pasardana_funds_latest.csv data/ || true
+          cp -f data/pasardana_funds_latest.json data/ || true
+
+          # Also keep timestamped versions (last 30 days)
+          find data -name "pasardana_funds_*.csv" -mtime -30 -exec cp {} data/ \; || true
+          find data -name "pasardana_funds_*.json" -mtime -30 -exec cp {} data/ \; || true
+
+          # Add and commit
+          git add data/
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            git commit -m "Update scraped data - ${TIMESTAMP}"
+            git push origin data
+          fi
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Scraper Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f data/pasardana_funds_latest.csv ]; then
+            RECORD_COUNT=$(tail -n +2 data/pasardana_funds_latest.csv | wc -l)
+            echo "- **Records scraped**: $RECORD_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status**: ❌ Failed - No data file generated" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Files Generated" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh data/ >> $GITHUB_STEP_SUMMARY || echo "No files found" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-logs-${{ github.run_number }}
+          path: |
+            *.log
+          retention-days: 30
