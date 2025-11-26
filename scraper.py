@@ -199,13 +199,12 @@ class PasardanaScraper:
 
     async def scrape_all_pages(self) -> pd.DataFrame:
         """
-        Scrape all pages with pagination support
+        Scrape all pages with infinite scroll support
 
         Returns:
             DataFrame containing all scraped data
         """
         all_data = []
-        page_num = 1
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.headless)
@@ -247,29 +246,76 @@ class PasardanaScraper:
                 except Exception:
                     pass
 
-                # Scrape first page
-                page_data = await self.scrape_page(page, page_num)
-                all_data.extend(page_data)
+                # Wait for initial table load
+                await page.wait_for_selector('table tbody tr', timeout=30000)
+                await asyncio.sleep(3)
 
-                # Scrape remaining pages
-                while True:
-                    has_next = await self.check_next_page(page)
-                    if not has_next:
-                        break
+                # Scrape with infinite scroll
+                previous_row_count = 0
+                no_change_count = 0
+                max_no_change = 5  # Stop after 5 consecutive scrolls with no new data
+                scroll_count = 0
+                max_scrolls = 100  # Safety limit
 
-                    page_num += 1
-                    page_data = await self.scrape_page(page, page_num)
+                logger.info("Starting infinite scroll scraping...")
 
-                    if not page_data:
-                        logger.warning(f"No data found on page {page_num}, stopping pagination")
-                        break
+                while scroll_count < max_scrolls:
+                    # Get current row count
+                    current_row_count = await page.evaluate('''() => {
+                        const rows = document.querySelectorAll('table tbody tr');
+                        // Filter out loading rows
+                        return Array.from(rows).filter(row => {
+                            const text = row.textContent.trim();
+                            return text && !text.includes('Memuat data') && text !== '';
+                        }).length;
+                    }''')
 
-                    all_data.extend(page_data)
+                    logger.info(f"Scroll {scroll_count + 1}: Found {current_row_count} rows")
 
-                    # Safety limit to prevent infinite loops
-                    if page_num > 1000:
-                        logger.warning("Reached maximum page limit (1000), stopping")
-                        break
+                    # Check if we got new data
+                    if current_row_count > previous_row_count:
+                        logger.info(f"New data loaded: {current_row_count - previous_row_count} new rows")
+                        previous_row_count = current_row_count
+                        no_change_count = 0
+                    else:
+                        no_change_count += 1
+                        logger.info(f"No new data (attempt {no_change_count}/{max_no_change})")
+
+                        if no_change_count >= max_no_change:
+                            logger.info("No new data after multiple scrolls, stopping")
+                            break
+
+                    # Scroll to bottom of page
+                    await page.evaluate('''() => {
+                        window.scrollTo(0, document.body.scrollHeight);
+                    }''')
+
+                    # Wait for potential new data to load
+                    await asyncio.sleep(3)
+
+                    # Also try scrolling the table itself if it's in a scrollable container
+                    try:
+                        await page.evaluate('''() => {
+                            const table = document.querySelector('table');
+                            if (table) {
+                                const container = table.closest('[class*="scroll"], .table-responsive, .overflow-auto');
+                                if (container) {
+                                    container.scrollTop = container.scrollHeight;
+                                }
+                            }
+                        }''')
+                        await asyncio.sleep(2)
+                    except Exception:
+                        pass
+
+                    scroll_count += 1
+
+                # Final scrape of all data
+                logger.info("Scraping all loaded data...")
+                all_data = await self.scrape_page(page, 1)
+
+                if scroll_count >= max_scrolls:
+                    logger.warning(f"Reached maximum scroll limit ({max_scrolls})")
 
             except Exception as e:
                 logger.error(f"Error during scraping: {str(e)}")
@@ -277,7 +323,7 @@ class PasardanaScraper:
             finally:
                 await browser.close()
 
-        logger.info(f"Total records scraped: {len(all_data)} from {page_num} pages")
+        logger.info(f"Total records scraped: {len(all_data)}")
 
         if not all_data:
             logger.warning("No data was scraped")
