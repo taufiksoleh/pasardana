@@ -197,14 +197,124 @@ class PasardanaScraper:
             logger.error(f"Error checking for next page: {str(e)}")
             return False
 
+    async def navigate_to_page(self, page: Page, page_number: int) -> bool:
+        """
+        Navigate to a specific page number by clicking the page button
+
+        Args:
+            page: Playwright page object
+            page_number: Page number to navigate to
+
+        Returns:
+            True if successfully navigated, False otherwise
+        """
+        try:
+            logger.info(f"Attempting to navigate to page {page_number}")
+
+            # Wait a bit before attempting to click
+            await asyncio.sleep(2)
+
+            # Try multiple selector strategies to find the page number button
+            selectors = [
+                f'a.page-link:text("{page_number}")',
+                f'button.page-link:text("{page_number}")',
+                f'a[aria-label="Page {page_number}"]',
+                f'button[aria-label="Page {page_number}"]',
+                f'.page-item a:text("{page_number}")',
+                f'.pagination a:text("{page_number}")',
+            ]
+
+            page_button = None
+            for selector in selectors:
+                try:
+                    page_button = await page.query_selector(selector)
+                    if page_button:
+                        logger.info(f"Found page button with selector: {selector}")
+                        break
+                except Exception:
+                    continue
+
+            if not page_button:
+                logger.warning(f"Could not find button for page {page_number}")
+                return False
+
+            # Check if the button is disabled
+            is_disabled = await page_button.evaluate('''(element) => {
+                return element.disabled ||
+                       element.classList.contains('disabled') ||
+                       element.parentElement?.classList.contains('disabled') ||
+                       element.parentElement?.classList.contains('active');
+            }''')
+
+            if is_disabled:
+                logger.info(f"Page {page_number} button is disabled or active (already on this page)")
+                return False
+
+            # Scroll button into view
+            await page_button.scroll_into_view_if_needed()
+            await asyncio.sleep(1)
+
+            # Click the page button
+            logger.info(f"Clicking page {page_number} button")
+            await page_button.click()
+
+            # Wait for navigation/content to load
+            await asyncio.sleep(4)
+
+            # Wait for table to be updated
+            await page.wait_for_selector('table tbody tr', timeout=15000)
+            await asyncio.sleep(2)
+
+            logger.info(f"Successfully navigated to page {page_number}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error navigating to page {page_number}: {str(e)}")
+            return False
+
+    async def get_total_pages(self, page: Page) -> int:
+        """
+        Detect the total number of pages available
+
+        Args:
+            page: Playwright page object
+
+        Returns:
+            Total number of pages
+        """
+        try:
+            total_pages = await page.evaluate('''() => {
+                // Find all page number links
+                const pageLinks = document.querySelectorAll('.page-link, .page-item a, .pagination a');
+                let maxPage = 1;
+
+                pageLinks.forEach(link => {
+                    const text = link.textContent.trim();
+                    const pageNum = parseInt(text);
+                    if (!isNaN(pageNum) && pageNum > maxPage) {
+                        maxPage = pageNum;
+                    }
+                });
+
+                return maxPage;
+            }''')
+
+            logger.info(f"Detected {total_pages} total pages")
+            return max(1, total_pages)
+
+        except Exception as e:
+            logger.warning(f"Error detecting total pages: {e}. Defaulting to 1 page.")
+            return 1
+
     async def scrape_all_pages(self) -> pd.DataFrame:
         """
-        Scrape all pages with infinite scroll support
+        Scrape all pages by clicking through pagination buttons
 
         Returns:
             DataFrame containing all scraped data
         """
         all_data = []
+        page_num = 1
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.headless)
@@ -246,76 +356,43 @@ class PasardanaScraper:
                 except Exception:
                     pass
 
-                # Wait for initial table load
+                # Wait for initial table to load
                 await page.wait_for_selector('table tbody tr', timeout=30000)
                 await asyncio.sleep(3)
 
-                # Scrape with infinite scroll
-                previous_row_count = 0
-                no_change_count = 0
-                max_no_change = 5  # Stop after 5 consecutive scrolls with no new data
-                scroll_count = 0
-                max_scrolls = 100  # Safety limit
+                # Detect total number of pages
+                total_pages = await self.get_total_pages(page)
+                logger.info(f"Will attempt to scrape {total_pages} pages")
 
-                logger.info("Starting infinite scroll scraping...")
+                # Scrape first page
+                logger.info("Scraping page 1")
+                page_data = await self.scrape_page(page, page_num)
+                all_data.extend(page_data)
+                logger.info(f"Page 1: Scraped {len(page_data)} records")
 
-                while scroll_count < max_scrolls:
-                    # Get current row count
-                    current_row_count = await page.evaluate('''() => {
-                        const rows = document.querySelectorAll('table tbody tr');
-                        // Filter out loading rows
-                        return Array.from(rows).filter(row => {
-                            const text = row.textContent.trim();
-                            return text && !text.includes('Memuat data') && text !== '';
-                        }).length;
-                    }''')
+                # Scrape remaining pages
+                for page_num in range(2, total_pages + 1):
+                    # Navigate to next page
+                    success = await self.navigate_to_page(page, page_num)
 
-                    logger.info(f"Scroll {scroll_count + 1}: Found {current_row_count} rows")
+                    if not success:
+                        logger.warning(f"Failed to navigate to page {page_num}, stopping pagination")
+                        break
 
-                    # Check if we got new data
-                    if current_row_count > previous_row_count:
-                        logger.info(f"New data loaded: {current_row_count - previous_row_count} new rows")
-                        previous_row_count = current_row_count
-                        no_change_count = 0
-                    else:
-                        no_change_count += 1
-                        logger.info(f"No new data (attempt {no_change_count}/{max_no_change})")
+                    # Scrape the page
+                    page_data = await self.scrape_page(page, page_num)
 
-                        if no_change_count >= max_no_change:
-                            logger.info("No new data after multiple scrolls, stopping")
-                            break
+                    if not page_data:
+                        logger.warning(f"No data found on page {page_num}, stopping pagination")
+                        break
 
-                    # Scroll to bottom of page
-                    await page.evaluate('''() => {
-                        window.scrollTo(0, document.body.scrollHeight);
-                    }''')
+                    all_data.extend(page_data)
+                    logger.info(f"Page {page_num}: Scraped {len(page_data)} records (Total so far: {len(all_data)})")
 
-                    # Wait for potential new data to load
-                    await asyncio.sleep(3)
-
-                    # Also try scrolling the table itself if it's in a scrollable container
-                    try:
-                        await page.evaluate('''() => {
-                            const table = document.querySelector('table');
-                            if (table) {
-                                const container = table.closest('[class*="scroll"], .table-responsive, .overflow-auto');
-                                if (container) {
-                                    container.scrollTop = container.scrollHeight;
-                                }
-                            }
-                        }''')
-                        await asyncio.sleep(2)
-                    except Exception:
-                        pass
-
-                    scroll_count += 1
-
-                # Final scrape of all data
-                logger.info("Scraping all loaded data...")
-                all_data = await self.scrape_page(page, 1)
-
-                if scroll_count >= max_scrolls:
-                    logger.warning(f"Reached maximum scroll limit ({max_scrolls})")
+                    # Safety limit to prevent infinite loops
+                    if page_num >= 1000:
+                        logger.warning("Reached maximum page limit (1000), stopping")
+                        break
 
             except Exception as e:
                 logger.error(f"Error during scraping: {str(e)}")
@@ -323,7 +400,7 @@ class PasardanaScraper:
             finally:
                 await browser.close()
 
-        logger.info(f"Total records scraped: {len(all_data)}")
+        logger.info(f"Total records scraped: {len(all_data)} from {page_num} pages")
 
         if not all_data:
             logger.warning("No data was scraped")
